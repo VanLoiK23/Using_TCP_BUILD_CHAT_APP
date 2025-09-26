@@ -92,7 +92,7 @@
 //
 //}
 
-package controller;
+package controller.ServerAndClientSocket;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -102,11 +102,26 @@ import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.util.Vector;
 
+import com.fatboyindustrial.gsonjavatime.Converters;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+import controller.Handler.LoginHandler;
+import controller.Handler.RegisterHandler;
+import model.Packet;
+import service.RedisOnlineService;
+import service.UserService;
+import util.RedisUtil;
+
 //Client handle
 public class ServerController implements Runnable {
 	private Socket socket;
 	private BufferedReader in;
 	private BufferedWriter out;
+	public Gson gson;
+
+	private RedisOnlineService redisOnlineService;
+	private UserService userService;
 
 	// Danh sách tất cả client đang kết nối (dùng Vector để quản lý)
 	private static Vector<ServerController> clients = new Vector<>();
@@ -116,6 +131,9 @@ public class ServerController implements Runnable {
 			this.socket = socket;
 			this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 			this.out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
+			gson = Converters.registerAll(new GsonBuilder()).setDateFormat("EEE MMM dd HH:mm:ss z yyyy").create();
+			this.redisOnlineService = new RedisOnlineService(RedisUtil.getClient());
+			this.userService = new UserService();
 
 			clients.add(this); // thêm client vào danh sách
 
@@ -132,11 +150,36 @@ public class ServerController implements Runnable {
 			String message;
 			while ((message = in.readLine()) != null) {
 				System.out.println("Received: " + message);
-				broadcast(message); // gửi cho tất cả client khác
+
+				Packet packet = gson.fromJson(message, Packet.class);
+
+				System.out.println(packet);
+				switch (packet.getType()) {
+				case "LOGIN": {
+					LoginHandler loginHandler=new LoginHandler(userService,gson);
+					Packet loginResponse = loginHandler.handle(packet);
+					sendSelfClient(loginResponse);
+					break;
+				}
+				case "REGISTER": {
+					RegisterHandler registerHandler=new RegisterHandler(userService,gson);
+					Packet registerReponse = registerHandler.handle(packet);
+					sendSelfClient(registerReponse);
+					break;
+				}
+				default:
+					broadcast(message); // gửi cho tất cả client khác	
+				}
 			}
 		} catch (IOException e) {
 			close();
 		}
+	}
+	
+	private void sendSelfClient(Packet packet) throws IOException {
+		this.out.write(gson.toJson(packet));
+		this.out.newLine();
+		this.out.flush();
 	}
 
 	// Gửi tin nhắn cho tất cả client trong Vector

@@ -1,21 +1,16 @@
 package controller;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.net.MalformedURLException;
-import java.net.Socket;
 import java.net.URL;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.ResourceBundle;
 
-import com.fatboyindustrial.gsonjavatime.Converters;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.mysql.cj.x.protobuf.MysqlxSession.Reset;
 
+import controller.ServerAndClientSocket.SocketClient;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
@@ -40,6 +35,7 @@ import javafx.scene.shape.Circle;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
 import model.ChatMessage;
+import model.Packet;
 import model.User;
 import service.RedisUserService;
 import service.UserService;
@@ -47,21 +43,17 @@ import util.RedisUtil;
 
 public class MainController implements Initializable {
 
-	private static final String SERVER = "localhost";
-	private static final int PORT = 12345;
-	private PrintWriter out;
-	private Socket socket;
-	private Gson gson = Converters.registerAll(new GsonBuilder())
-		    .setDateFormat("EEE MMM dd HH:mm:ss z yyyy")
-		    .create();
 	private UserService userService = new UserService();
 	private RedisUserService redisUserService = new RedisUserService(RedisUtil.getClient());
 	private User user;
 	private String activeSelect;
+	private SocketClient socketClient;
 
 	private void setActiveSelect(String activeSelect) {
 		this.activeSelect = activeSelect;
 	}
+
+	private String lastSenderId = null;
 
 	@FXML
 	private Circle avatarUser;
@@ -116,9 +108,9 @@ public class MainController implements Initializable {
 		Image image = new Image(user.getAvatarUrl(), true);
 
 		image.progressProperty().addListener((obs, oldVal, newVal) -> {
-		    if (newVal.doubleValue() == 1.0 && !image.isError()) {
-		        avatarUser.setFill(new ImagePattern(image));
-		    }
+			if (newVal.doubleValue() == 1.0 && !image.isError()) {
+				avatarUser.setFill(new ImagePattern(image));
+			}
 		});
 	}
 
@@ -162,10 +154,17 @@ public class MainController implements Initializable {
 			chatMessage.setType("text");
 			chatMessage.setRead(false);
 			chatMessage.setTimestamp(LocalDateTime.now());
+//
+//			out.println(gson.toJson(chatMessage));
+//			out.flush();
 
-			out.println(gson.toJson(chatMessage));
-			out.flush();
+			Packet packetRequest = new Packet();
+			packetRequest.setType("MESSAGE");
+			packetRequest.setData(chatMessage);
 
+			socketClient.sendPacket(packetRequest);
+
+			
 			onSendAndReceiveMessenge(chatMessage, true);
 
 			messageText.clear();
@@ -182,6 +181,7 @@ public class MainController implements Initializable {
 		}
 	}
 
+	// tách ra MessageRender
 	public void onSendAndReceiveMessenge(ChatMessage chatMessage, Boolean isSend) throws MalformedURLException {
 
 		String messageContent = chatMessage.getContent();
@@ -198,21 +198,19 @@ public class MainController implements Initializable {
 		userSender.setAvatarUrl(redisUserService.getCachedAvatar(chatMessage.getSenderId()));
 
 		// Avatar hình tròn
-		
+
 		Image image = new Image(userSender.getAvatarUrl(), true);
-		
+
 		ImageView avatar = new ImageView();
 		avatar.setFitWidth(30);
 		avatar.setFitHeight(30);
 		avatar.setClip(new Circle(15, 15, 15));
 
 		image.progressProperty().addListener((obs, oldVal, newVal) -> {
-		    if (newVal.doubleValue() == 1.0 && !image.isError()) {
-		        avatar.setImage(image);
-		    }
+			if (newVal.doubleValue() == 1.0 && !image.isError()) {
+				avatar.setImage(image);
+			}
 		});
-
-		
 
 		// Bong bóng tin nhắn
 		Text text = new Text(messageContent);
@@ -224,11 +222,13 @@ public class MainController implements Initializable {
 		TextFlow textFlow = new TextFlow(text);
 		textFlow.setStyle(mapStyleMessenger.get(isSend).styleCss);
 		textFlow.setPadding(new Insets(5, 10, 5, 10));
+		textFlow.setMaxWidth(300); 
 
 		// HBox chứa avatar + tin nhắn
 		HBox hBox = new HBox(10);
 		hBox.setAlignment(mapStyleMessenger.get(isSend).position);
 		hBox.setPadding(new Insets(5, 5, 5, 10));
+		hBox.setStyle("-fx-cursor: text;");
 
 		if (isSend) {
 			hBox.getChildren().addAll(textFlow);
@@ -242,16 +242,46 @@ public class MainController implements Initializable {
 		if (isSend) {
 			messageBox.getChildren().addAll(hBox);
 
+//			messageBox.setOnMouseClicked(event -> {
+//			    messageBox.setStyle("-fx-translate-y:10px;-fx-text-fill:orange");
+//			    messageBox.
+//			});
 			vboxInScroll.getChildren().add(messageBox);
 		} else {
 			// Tên người gửi
-			Label nameLabel = new Label(userSender.getUsername());
-			nameLabel.setStyle("-fx-font-weight: bold; -fx-padding: 0 0 3 5;");
+			// nếu trùng người gửi thì ko hiển thị tên và avatar
+			System.out.println("lastSender: "+lastSenderId);
+			System.out.println("SenderID message: "+chatMessage.getSenderId());
+			if (!chatMessage.getSenderId().equals(lastSenderId)) {
+				Label nameLabel = new Label(userSender.getUsername());
+				nameLabel.setStyle("-fx-font-weight: bold; -fx-padding: 0 0 3 5;");
+				messageBox.getChildren().addAll(nameLabel, hBox);
+			} else {
+				hBox.setStyle("-fx-translate-x:40px");
+				hBox.setSpacing(1.0);
+				hBox.getChildren().remove(avatar); // ẩn avatar
+				messageBox.getChildren().add(hBox); // không có tên
+			}
+			
 
-			messageBox.getChildren().addAll(nameLabel, hBox);
+//			Label nameLabel = new Label(userSender.getUsername());
+//			nameLabel.setStyle("-fx-font-weight: bold; -fx-padding: 0 0 3 5;");
+//
+//			messageBox.getChildren().addAll(nameLabel, hBox);
 
 			Platform.runLater(() -> vboxInScroll.getChildren().add(messageBox));
 		}
+		
+		lastSenderId = chatMessage.getSenderId();
+	}
+
+	private void reset() {
+		lastSenderId = null;
+		vboxInScroll.getChildren().clear();
+	}
+	
+	public void actionForMessageBox() {
+
 	}
 
 	@FXML
@@ -320,46 +350,21 @@ public class MainController implements Initializable {
 			}
 		});
 
-		vboxInScroll.heightProperty().addListener(new ChangeListener<Number>() {
-
-			@Override
-			public void changed(ObservableValue<? extends Number> arg0, Number arg1, Number arg2) {
-				scrollMessage.setVvalue((Double) arg2);
-			}
-
+		//always scroll to end
+		vboxInScroll.heightProperty().addListener((obs, oldVal, newVal) -> {
+		    scrollMessage.setVvalue(1.0); 
 		});
-
-		try {
-			socket = new Socket(SERVER, PORT);
-
-			out = new PrintWriter(socket.getOutputStream(), true);
-
-			System.out.println("Connected to server! heldas");
-
-			// receive difference message from other client
-			new Thread(() -> {
-				try {
-					BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-					String msg;
-					while ((msg = in.readLine()) != null) {
-						ChatMessage chatMessage = gson.fromJson(msg, ChatMessage.class);
-
-//						User sender=new User();
-//						sender.setUserName(chatMessage.getSender().getUserName());
-
-						onSendAndReceiveMessenge(chatMessage, false);
-						System.out.println("Message from server: " + msg);
-					}
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-			}).start();
-
-		} catch (IOException e) {
-			e.printStackTrace();
-
-			out.close();
-		}
+		scrollMessage.setFitToWidth(true);
+		
+		socketClient = SocketClient.getInstance();
+		socketClient.setMessageHandler(chatMessage -> {
+			try {
+				onSendAndReceiveMessenge(chatMessage, false);
+			} catch (MalformedURLException e) {
+				e.printStackTrace();
+				System.out.println("Can't receive message");
+			}
+		});
 
 	}
 

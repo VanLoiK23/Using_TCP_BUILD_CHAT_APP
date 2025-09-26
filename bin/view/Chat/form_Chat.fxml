@@ -111,7 +111,7 @@
             <Line endX="521.4000244140625" endY="7.62939453125E-6" layoutX="101.0" layoutY="59.0" startX="-100.0" strokeWidth="0.1" />
             <ScrollPane fx:id="scrollMessage" layoutY="60.0" prefHeight="504.0" prefWidth="623.0" style="-fx-background-color: #d3eaff; -fx-border-color: #d3eaff; -fx-opacity: 1;">
                <content>
-                  <VBox fx:id="vboxInScroll" prefHeight="499.0" prefWidth="618.0" style="-fx-background-color: #d3eaff;" />
+                  <VBox fx:id="vboxInScroll" prefHeight="499.0" prefWidth="616.0" style="-fx-background-color: #d3eaff;" />
                </content>
             </ScrollPane>
             <HBox alignment="CENTER" layoutY="565.0" prefHeight="46.0" prefWidth="623.0">

@@ -6,10 +6,12 @@ import java.net.URL;
 import java.time.LocalDate;
 import java.util.Date;
 import java.util.ResourceBundle;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import controller.Common.CommonController;
+import controller.ServerAndClientSocket.SocketClient;
 import javafx.animation.FadeTransition;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -25,6 +27,7 @@ import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Alert.AlertType;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
@@ -36,11 +39,13 @@ import javafx.scene.shape.Circle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import model.Packet;
 import model.User;
 import service.UserService;
 import util.PasswordUtil;
 
 public class RegisterController implements Initializable {
+	private SocketClient socketClient;
 
 	@FXML
 	private DatePicker bod;
@@ -85,13 +90,13 @@ public class RegisterController implements Initializable {
 	private File selectedAvatarFile;
 
 	private UserService userService = new UserService();
-	
+
 	private NavigateBetweenLoginRegister parentController;
 
 	public void setParentController(NavigateBetweenLoginRegister controller) {
-	    this.parentController = controller;
+		this.parentController = controller;
 	}
-	
+
 	@FXML
 	void create(MouseEvent event) throws IOException {
 		if (!email.getText().isEmpty() && !password.getText().isEmpty() && bod.getValue() != null
@@ -120,93 +125,108 @@ public class RegisterController implements Initializable {
 			commonController.alertInfo(Alert.AlertType.WARNING, "Cảnh báo!", "Vui lòng nhập đầy đủ thông tin!");
 		}
 	}
-	
+
 	private void handleCreateAccountAsync() {
-	    progress.setPrefSize(40, 40);
-	    progress.setVisible(true);
-	    button.setText(null);
-	    button.setDisable(true);
-	    button.setOpacity(0.6);
-	    
-	    
-	    Task<Void> task = new Task<>() {
-	        @Override
-	        protected Void call() {
-	            try {
-	                // Tạo user object
-	                User user = new User();
-	                String gender = genderGroup.getSelectedToggle().getUserData().toString();
-	                String urlAvatar = user.getAvatarDefault(gender);
+		progress.setPrefSize(40, 40);
+		progress.setVisible(true);
+		button.setText(null);
+		button.setDisable(true);
+		button.setOpacity(0.6);
 
-	                // Upload ảnh nếu có
-	                if (selectedAvatarFile != null) {
-	                    urlAvatar = userService.upsertImg(selectedAvatarFile);
-	                }
+		Task<Void> task = new Task<>() {
+			@Override
+			protected Void call() {
+				try {
+					// Tạo user object
+					User user = new User();
+					String gender = genderGroup.getSelectedToggle().getUserData().toString();
+					String urlAvatar = user.getAvatarDefault(gender);
 
-	                if (urlAvatar != null && !urlAvatar.isEmpty()) {
-	                    user.setUsername(username.getText());
-	                    user.setBod(bod.getValue());
-	                    user.setEmail(email.getText());
-	                    user.setGender(gender);
-	                    user.setAvatarUrl(urlAvatar);
-	                    user.setCreateAt(new Date());
-	                    user.setPassword(PasswordUtil.hashPassword(password.getText()));
+					// Upload ảnh nếu có
+					if (selectedAvatarFile != null) {
+						urlAvatar = userService.upsertImg(selectedAvatarFile);
+					}
 
-	                    String userID = userService.insertOne(user);
+					if (urlAvatar != null && !urlAvatar.isEmpty()) {
+						user.setUsername(username.getText());
+						user.setBod(bod.getValue());
+						user.setEmail(email.getText());
+						user.setGender(gender);
+						user.setAvatarUrl(urlAvatar);
+						user.setCreateAt(new Date());
+						user.setPassword(PasswordUtil.hashPassword(password.getText()));
 
-	                    Platform.runLater(() -> {
-	                        progress.setVisible(false);
-	                        button.setText("Create a account");
-	                        button.setOpacity(1);
-	                        button.setDisable(false);
+						socketClient = SocketClient.getInstance();
+						Packet packetRequest = new Packet();
+						packetRequest.setType("REGISTER");
+						packetRequest.setData(user);
 
-	                        if (userID != null) {
-	                            FadeTransition fade = new FadeTransition(Duration.millis(300), button);
-	                            fade.setFromValue(0);
-	                            fade.setToValue(1);
-	                            fade.play();
+						socketClient.sendPacket(packetRequest);
 
-	                            commonController.alertInfo(Alert.AlertType.CONFIRMATION, "Thành công!",
-	                                    "Bạn đã tạo tài khoản thành công!");
-	                            
-	                            clean();
-	                            
-	                            //load login
-	                           parentController.open_signin(null);
-	                        
-	                        } else {
-	                            commonController.alertInfo(Alert.AlertType.ERROR, "Lỗi!",
-	                                    "Không thể tạo tài khoản. Vui lòng thử lại.");
-	                        }
-	                    });
-	                } else {
-	                    Platform.runLater(() -> {
-	                        progress.setVisible(false);
-	                        button.setText("Create a account");
-	                        button.setOpacity(1);
-	                        button.setDisable(false);
+						Packet packetReponse = socketClient.responseQueue.poll(5, TimeUnit.SECONDS);
 
-	                        commonController.alertInfo(Alert.AlertType.WARNING, "Lỗi!",
-	                                "Upload ảnh không thành công! Đã dùng ảnh mặc định.");
-	                    });
-	                }
-	            } catch (Exception ex) {
-	                Platform.runLater(() -> {
-	                    progress.setVisible(false);
-	                    button.setText("Create a account");
-	                    button.setOpacity(1);
-	                    button.setDisable(false);
+						if (packetReponse != null) {
 
-	                    commonController.alertInfo(Alert.AlertType.ERROR, "Lỗi hệ thống!",
-	                            "Đã xảy ra lỗi không mong muốn.");
-	                });
-	                ex.printStackTrace();
-	            }
-	            return null;
-	        }
-	    };
+							if (packetReponse.getType().equals("REGISTER_RESULT")) {
+								String userID = socketClient.gson
+										.fromJson(socketClient.gson.toJson(packetReponse.getData()), String.class);
 
-	    new Thread(task).start();
+								Platform.runLater(() -> {
+									setDefault();
+
+									if (userID != null) {
+										FadeTransition fade = new FadeTransition(Duration.millis(300), button);
+										fade.setFromValue(0);
+										fade.setToValue(1);
+										fade.play();
+
+										commonController.alertInfo(Alert.AlertType.CONFIRMATION, "Thành công!",
+												"Bạn đã tạo tài khoản thành công!");
+
+										clean();
+
+										// load login
+										parentController.open_signin(null);
+
+									} else {
+										commonController.alertInfo(Alert.AlertType.ERROR, "Lỗi!",
+												"Không thể tạo tài khoản. Vui lòng thử lại.");
+									}
+								});
+							}
+						} else {
+							commonController.alertInfo(AlertType.ERROR, "Cảnh báo!!!!",
+									"Không nhận được phản hồi nào từ server!");
+						}
+					} else {
+						Platform.runLater(() -> {
+							setDefault();
+
+							commonController.alertInfo(Alert.AlertType.WARNING, "Lỗi!",
+									"Upload ảnh không thành công! Đã dùng ảnh mặc định.");
+						});
+					}
+				} catch (Exception ex) {
+					Platform.runLater(() -> {
+						setDefault();
+
+						commonController.alertInfo(Alert.AlertType.ERROR, "Lỗi hệ thống!",
+								"Đã xảy ra lỗi không mong muốn.");
+					});
+					ex.printStackTrace();
+				}
+				return null;
+			}
+		};
+
+		new Thread(task).start();
+	}
+
+	private void setDefault() {
+		progress.setVisible(false);
+		button.setText("Create a account");
+		button.setOpacity(1);
+		button.setDisable(false);
 	}
 
 	private void clean() {
